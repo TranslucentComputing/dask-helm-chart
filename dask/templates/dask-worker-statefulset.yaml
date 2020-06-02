@@ -1,0 +1,171 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "dask.fullname" . }}-worker
+  labels:
+    app: {{ template "dask.name" . }}
+    heritage: {{ .Release.Service | quote }}
+    release: {{ .Release.Name | quote }}
+    chart: {{ template "dask.chart" . }}
+    component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  serviceName: {{ template "dask.fullname" . }}
+  selector:
+    matchLabels:
+      app: {{ template "dask.name" . }}
+      release: {{ .Release.Name | quote }}
+      component: worker
+  updateStrategy:
+    type: {{ .Values.worker.updateStrategy.type }}
+  {{- if .Values.worker.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+        - {{ .Values.worker.persistence.accessMode | quote }}
+    {{- if .Values.worker.persistence.storageClass }}
+    {{- if (eq "-" .Values.worker.persistence.storageClass) }}
+      storageClassName: ""
+    {{- else }}
+      storageClassName: "{{ .Values.worker.persistence.storageClass }}"
+    {{- end }}
+    {{- end }}
+      resources:
+        requests:
+          storage: "{{ .Values.worker.persistence.size }}"
+    {{- end }}   
+  template:
+    metadata:
+      labels:
+        app: {{ template "dask.name" . }}
+        release: {{ .Release.Name | quote }}
+        component: worker
+    spec:
+      imagePullSecrets:
+        {{- toYaml .Values.worker.image.pullSecrets | nindent 8 }}
+      {{- if .Values.worker.persistence.enabled }}   
+      initContainers:
+      - name: "remove-lost-found"
+        image: "busybox:latest"
+        imagePullPolicy: "IfNotPresent"
+        command:
+        - /bin/sh
+        - -c
+        - >
+          set -e;
+          set -x;
+          if [ -d /spill/lost+found ]; then
+            rm -rfv /spill/lost+found;
+          fi;
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - mountPath: /spill
+          name: data
+      - name: "update-mount-owner"
+        image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+        imagePullPolicy: "IfNotPresent"
+        command:
+        - /bin/sh
+        - -c
+        - >
+          set -e;
+          set -x;
+          chown dask:dask /spill;
+          chown -R dask:dask /home/dask/;
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - mountPath: /spill
+          name: data  
+      {{- end }}    
+      containers:
+        - name: {{ template "dask.fullname" . }}-worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          args:
+            - {{ .Values.worker.image.dask_worker }}
+            - {{ template "dask.fullname" . }}-scheduler:{{ .Values.scheduler.servicePort }}
+          {{- if .Values.worker.resources.limits }}
+            - --nthreads
+            - {{ .Values.worker.resources.limits.cpu | default .Values.worker.default_resources.cpu | quote }}
+            - --memory-limit
+            - {{ .Values.worker.resources.limits.memory | default .Values.worker.default_resources.memory | quote }}
+          {{- end }}
+            - --no-dashboard
+          {{- if .Values.worker.port }}
+            - --worker-port
+            - {{ .Values.worker.port | quote }}
+          {{- end }}
+          {{- if .Values.worker.persistence.enabled }}
+            - --local-directory
+            - /spill
+          {{- end }}    
+          {{- if .Values.worker.preload.enabled }}
+            - --preload
+            - worker-preload.py
+          {{- end }}                    
+          ports:
+            - containerPort: 8789          
+          volumeMounts:
+          {{- if .Values.worker.persistence.enabled }}  
+            - mountPath: /spill
+              name: data
+          {{- end }}    
+          {{- if .Values.worker.preload.enabled }}              
+            - mountPath: worker-preload.py
+              name: config
+              subPath: worker-preload.py 
+          {{- end }}   
+            - mountPath: /home/dask/.config/dask/distributed.yaml
+              name: config 
+              subPath: worker-distrirbuted.yaml           
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          env:
+            {{- toYaml .Values.worker.env | nindent 12 }}
+    {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- if or .Values.worker.antiAffinity .Values.worker.nodeAffinity }}
+      affinity:
+      {{- end }}
+      {{- if eq .Values.worker.antiAffinity "hard" }}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: "kubernetes.io/hostname"
+              labelSelector:
+                matchLabels:   
+                  app: {{ template "dask.name" . }}
+                  release: {{ .Release.Name | quote }}
+                  component: worker                               
+      {{- else if eq .Values.worker.antiAffinity "soft" }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: {{ template "dask.name" . }}
+                  release: {{ .Release.Name | quote }}
+                  component: worker
+      {{- end }}
+      {{- with .Values.worker.nodeAffinity }}
+        nodeAffinity:
+{{ toYaml . | indent 10 }}
+      {{- end }}
+    {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      volumes:
+      {{- if .Values.worker.preload.enabled }}
+      - name: config
+        configMap:
+          name: {{ template "dask.fullname" . }}
+      {{- end }}      
+    

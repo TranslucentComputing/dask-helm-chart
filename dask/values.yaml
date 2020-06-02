@@ -5,16 +5,18 @@
 scheduler:
   name: scheduler
   image:
-    repository: "daskdev/dask"
-    tag: 2.11.0
+    repository: "gcr.io/tcinc-dev/dask"
+    tag: 1.0.3
     pullPolicy: IfNotPresent
     # See https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
     pullSecrets:
     #  - name: regcred
   replicas: 1
-  # serviceType: "ClusterIP"
+  preload:
+    enabled: false
+  # serviceType: "LoadBalancer"
   # serviceType: "NodePort"
-  serviceType: "LoadBalancer"
+  serviceType: "ClusterIP"
   servicePort: 8786
   resources: {}
   #  limits:
@@ -43,15 +45,28 @@ webUI:
 worker:
   name: worker
   image:
-    repository: "daskdev/dask"
-    tag: 2.11.0
+    repository: "gcr.io/tcinc-dev/dask"
+    tag: 1.0.3
     pullPolicy: IfNotPresent
     # dask_worker: "dask-cuda-worker"
     dask_worker: "dask-worker"
     pullSecrets:
     #  - name: regcred
   replicas: 3
-  aptPackages: >-
+  persistence:
+    enabled: false
+  #  accessMode: ReadWriteOnce    
+  3  size: "10Gi"
+  preload:
+    enabled: false
+  #  code: |-
+  #    import nltk
+  #    
+  #    def dask_setup(worker):
+  #        nltk.download('punkt')
+  #        nltk.download('averaged_perceptron_tagger')
+  #        nltk.download('wordnet')
+  #        nltk.download('stopwords')  
   default_resources:  # overwritten by resource limits if they exist
     cpu: 1
     memory: "4GiB"
@@ -59,7 +74,7 @@ worker:
   #  - name: EXTRA_CONDA_PACKAGES
   #    value: numba xarray -c conda-forge
   #  - name: EXTRA_PIP_PACKAGES
-  #    value: s3fs dask-ml --upgrade
+  #    value: nltk
   resources: {}
   #  limits:
   #    cpu: 1
@@ -70,55 +85,46 @@ worker:
   #    memory: 3G
   #    nvidia.com/gpu: 1
   tolerations: []
-  nodeSelector: {}
-  affinity: {}
+  nodeSelector: {}  
+  antiAffinity: "soft"
+  updateStrategy:
+    type: OnDelete
   port: ""
+  config: |-
+    distributed:
+      version: 2
+      logging:
+        distributed: info
+        distributed.client: warning
+        bokeh: critical
+        tornado: critical
+        tornado.application: error
 
-jupyter:
-  name: jupyter
-  enabled: true
-  image:
-    repository: "daskdev/dask-notebook"
-    tag: 2.11.0
-    pullPolicy: IfNotPresent
-    pullSecrets:
-    #  - name: regcred
-  replicas: 1
-  # serviceType: "ClusterIP"
-  # serviceType: "NodePort"
-  serviceType: "LoadBalancer"
-  servicePort: 80
-  # This hash corresponds to the password 'dask'
-  password: 'sha1:aae8550c0a44:9507d45e087d5ee481a5ce9f4f16f37a0867318c'
-  env:
-  #  - name: EXTRA_CONDA_PACKAGES
-  #    value: "numba xarray -c conda-forge"
-  #  - name: EXTRA_PIP_PACKAGES
-  #    value: "s3fs dask-ml --upgrade"
-  args:
-  #  - "start.sh"
-  #  - "jupyter"
-  #  - "lab"
-  extraConfig: |-
-    # Extra Jupyter config goes here
-    # E.g
-    # c.NotebookApp.port = 8888
-  resources: {}
-  #  limits:
-  #    cpu: 2
-  #    memory: 6G
-  #  requests:
-  #    cpu: 2
-  #    memory: 6G
-  tolerations: []
-  nodeSelector: {}
-  affinity: {}
-  ingress:
-    enabled: false
-    tls: false
-    # secretName: dask-jupyter-tls
-    hostname: dask-jupyter.example.com
-    annotations:
-      # kubernetes.io/ingress.class: "nginx"
-      # secretName: my-tls-cert
-      # kubernetes.io/tls-acme: "true"
+      worker:
+        blocked-handlers: []
+        multiprocessing-method: spawn
+        use-file-locking: True
+        connections:            # Maximum concurrent connections for data
+          outgoing: 50          # This helps to control network saturation
+          incoming: 10
+        preload: []
+        preload-argv: []
+        daemon: True
+        validate: False         # Check worker state at every step for debugging
+        lifetime:
+          duration: null        # Time after which to gracefully shutdown the worker
+          stagger: 0 seconds    # Random amount by which to stagger lifetimes
+          restart: False        # Do we ressurrect the worker after the lifetime deadline?
+
+        profile:
+          interval: 10ms        # Time between statistical profiling queries
+          cycle: 1000ms         # Time between starting new profile
+          low-level: False      # Whether or not to include low-level functions  
+
+        # Fractions of worker memory at which we take action to avoid memory blowup
+        # Set any of the lower three values to False to turn off the behavior entirely
+        memory:
+          target: 0.60  # target fraction to stay below
+          spill: 0.70  # fraction at which we spill to disk
+          pause: 0.80  # fraction at which we pause worker threads
+          terminate: 0.95  # fraction at which we terminate the worker

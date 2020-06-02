@@ -1,3 +1,8 @@
+# TC Updates
+
+Removed Jupyter, it is deployed with JupyterHub
+Updated worker to statefulsets to use disk spill over.
+
 # Dask Helm Chart
 
 [![Travis Build Status](https://travis-ci.com/dask/helm-chart.svg?branch=master)](https://travis-ci.com/dask/helm-chart)

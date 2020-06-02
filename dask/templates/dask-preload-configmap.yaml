@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "dask.fullname" . }}
+  labels:
+    app: {{ template "dask.name" . }}
+    heritage: {{ .Release.Service | quote }}
+    release: {{ .Release.Name | quote }}
+    chart: {{ template "dask.chart" . }}
+data:
+    {{- if .Values.worker.preload.enabled }}
+    worker-preload.py: |-   
+{{ tpl .Values.worker.preload.code . | indent 8 }}
+    {{- end }}
+
+    {{- if .Values.scheduler.preload.enabled }}
+    scheduler-preload.py: |-
+{{ tpl .Values.scheduler.preload.code . | indent 8 }}
+    {{- end }}
+
+    worker-distrirbuted.yaml: |-
+{{ tpl .Values.worker.config . | indent 8 }}    
+    
